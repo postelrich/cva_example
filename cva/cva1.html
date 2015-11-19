@@ -185,7 +185,7 @@ div#notebook {
 </div>
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
-<h1 id="Using-Numba-for-Performance-Gains---A-Finance-Example">Using Numba for Performance Gains - A Finance Example<a class="anchor-link" href="#Using-Numba-for-Performance-Gains---A-Finance-Example">&#182;</a></h1><p>This post looks out how Numba can be used to speed up a finance example with minimal effort.  The example looks at an  application of Monte Carlo simulation for calculating a simplified version of Credit Valuation Adjustment on a portfolio. The first half explains the finance and setup and the second half show how we can speed it up and benefit from that speedup.</p>
+<h1 id="Using-Numba-for-Performance-Gains---A-Finance-Example">Using Numba for Performance Gains - A Finance Example<a class="anchor-link" href="#Using-Numba-for-Performance-Gains---A-Finance-Example">&#182;</a></h1><p>This post looks at how Numba can be used to speed up a finance example with minimal effort.  The example looks at an  application of Monte Carlo simulation for calculating a simplified version of Credit Valuation Adjustment on a portfolio. The first half explains the finance and setup and the second half show how we can speed it up and benefit from that speedup.</p>
 <p><a href="https://en.wikipedia.org/wiki/Credit_valuation_adjustment">Credit Valuation Adjustment</a> is a measure of the credit risk a bank has between its <a href="https://en.wikipedia.org/wiki/Counterparty">counterparties</a>.  Specifically it is the adjustment to the fair value price of derivative instruments to account for <a href="https://en.wikipedia.org/wiki/Credit_risk#Counterparty_risk">counterparty credit risk</a>.  This is an interesting problem to look at as a bank can have millions of credit instruments (referenced as deals in the code) outstanding with thousands of counterparties.  There are many types of deals, each type having its own complexity in calculating price.  Similarly, each counterparty has its own risks, default risk being the main concern with CVA.  <a href="https://en.wikipedia.org/wiki/Monte_Carlo_method">Monte Carlo</a> is applied to estimate the future values of these instruments along with the probability of default from the counterparty.</p>
 <p>The formula for CVA is as such,</p>
 $$CVA = (1-R)\sum_{i=0}^{n}q_i p_i$$<p>where $q$ is the default probability, $R$ the <a href="http://www.investopedia.com/terms/r/recovery-rate.asp">recovery rate</a> and $p$ is the price of the instrument. To simplify the calculation, we can ignore the recovery rate and assume the default probability of the counterparty is limited to a hazard rate such that:</p>
@@ -211,7 +211,6 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
 <h2 id="Inputs">Inputs<a class="anchor-link" href="#Inputs">&#182;</a></h2><p>In this section we define our inputs.  Most of these inputs are used to generate our deals.  These include the number of deals, the ratio of counterparty risk, maturity, and value.  We also define some of the inputs for the Monte Carlo, like the number of simulations and periods per year.  These are defined here since we are pregenerating the normals at the moment.</p>
-<p>Note, instead of using letter ratings for the keys, we use ints.  This is for numba, since it does not currently support string operations or dictionaries.</p>
 
 </div>
 </div>
@@ -265,6 +264,16 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
+<p>Note, instead of using letter ratings for the keys, we have enumerated using integers. Numba does not currently support string operations or dictionaries. This is one important consideration when working with Numba.</p>
+
+</div>
+</div>
+</div>
+<div class="cell border-box-sizing text_cell rendered">
+<div class="prompt input_prompt">
+</div>
+<div class="inner_cell">
+<div class="text_cell_render border-box-sizing rendered_html">
 <h2 id="Generating-our-portfolio">Generating our portfolio<a class="anchor-link" href="#Generating-our-portfolio">&#182;</a></h2><p>First lets make some functions to randomly assign a rating and a currency.</p>
 
 </div>
@@ -300,32 +309,28 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 <div class="prompt input_prompt">In&nbsp;[3]:</div>
 <div class="inner_cell">
     <div class="input_area">
-<div class=" highlight hl-ipython3"><pre><span class="c"># Generate deals with counterparty info</span>
-<span class="n">deals</span> <span class="o">=</span> <span class="p">[]</span>
-
-<span class="c"># Generate forex forwards</span>
-<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_forex</span><span class="p">):</span>
+<div class=" highlight hl-ipython3"><pre><span class="c"># function to generate a forex deal</span>
+<span class="k">def</span> <span class="nf">forex</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
     <span class="n">r</span> <span class="o">=</span> <span class="n">get_rating</span><span class="p">()</span>
-    <span class="n">deals</span><span class="o">.</span><span class="n">append</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_value</span><span class="p">,</span> <span class="n">max_value</span><span class="p">),</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">,</span> <span class="n">max_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">)</span><span class="o">/</span><span class="n">ppy</span><span class="p">,</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="n">min_fixed</span><span class="p">,</span> <span class="n">max_fixed</span><span class="p">),</span>
-                  <span class="n">r</span><span class="p">,</span>
-                  <span class="n">hazard</span><span class="p">[</span><span class="n">r</span><span class="p">],</span>
-                  <span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+    <span class="k">return</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_value</span><span class="p">,</span> <span class="n">max_value</span><span class="p">),</span> <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">,</span> <span class="n">max_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">)</span><span class="o">/</span><span class="n">ppy</span><span class="p">,</span>
+            <span class="n">rand</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="n">min_fixed</span><span class="p">,</span> <span class="n">max_fixed</span><span class="p">),</span> <span class="n">r</span><span class="p">,</span> <span class="n">hazard</span><span class="p">[</span><span class="n">r</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
 
-<span class="c"># Generate swaps</span>
-<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_forex</span><span class="p">,</span> <span class="n">n_forex</span><span class="o">+</span><span class="n">n_swaps</span><span class="p">):</span>
+<span class="c"># function to generate a swap deal</span>
+<span class="k">def</span> <span class="nf">swap</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
     <span class="n">r</span> <span class="o">=</span> <span class="n">get_rating</span><span class="p">()</span>
-    <span class="n">deals</span><span class="o">.</span><span class="n">append</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_value</span><span class="p">,</span> <span class="n">max_value</span><span class="p">),</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">,</span> <span class="n">max_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">)</span><span class="o">/</span><span class="n">ppy</span><span class="p">,</span>
-                  <span class="n">rand</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="n">min_fixed</span><span class="p">,</span> <span class="n">max_fixed</span><span class="p">),</span>
-                  <span class="n">r</span><span class="p">,</span>
-                  <span class="n">hazard</span><span class="p">[</span><span class="n">r</span><span class="p">],</span>
-                  <span class="n">get_swap_cur</span><span class="p">()])</span>
+    <span class="k">return</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_value</span><span class="p">,</span> <span class="n">max_value</span><span class="p">),</span> <span class="n">rand</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">min_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">,</span> <span class="n">max_maturity</span><span class="o">*</span><span class="n">ppy</span><span class="p">)</span><span class="o">/</span><span class="n">ppy</span><span class="p">,</span>
+            <span class="n">rand</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="n">min_fixed</span><span class="p">,</span> <span class="n">max_fixed</span><span class="p">),</span> <span class="n">r</span><span class="p">,</span> <span class="n">hazard</span><span class="p">[</span><span class="n">r</span><span class="p">],</span> <span class="n">get_swap_cur</span><span class="p">())</span>
 
-<span class="n">deals</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">deals</span><span class="p">)</span>  <span class="c"># convert to numpy array</span>
+<span class="c"># vectorize to get functions to work with fromfunction</span>
+<span class="n">vforex</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">vectorize</span><span class="p">(</span><span class="n">forex</span><span class="p">)</span>
+<span class="n">vswap</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">vectorize</span><span class="p">(</span><span class="n">swap</span><span class="p">)</span>
+
+<span class="c"># generate forex and swaps</span>
+<span class="n">forexs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">fromfunction</span><span class="p">(</span><span class="n">vforex</span><span class="p">,</span> <span class="p">(</span><span class="n">n_forex</span><span class="p">,)))</span><span class="o">.</span><span class="n">T</span>
+<span class="n">swaps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">fromfunction</span><span class="p">(</span><span class="n">vswap</span><span class="p">,</span> <span class="p">(</span><span class="n">n_swaps</span><span class="p">,)))</span><span class="o">.</span><span class="n">T</span>
+
+<span class="c"># combine into one deal array</span>
+<span class="n">deals</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">forexs</span><span class="p">,</span> <span class="n">swaps</span><span class="p">])</span> 
 
 <span class="c"># print first row to show an example of one deal</span>
 <span class="n">deals</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c"># [type, value, maturity, fixed, rating, hazard, currency]</span>
@@ -343,8 +348,8 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 
 
 <div class="output_text output_subarea output_execute_result">
-<pre>array([  0.00000000e+00,   3.53748400e+07,   5.91666667e+00,
-         7.56435707e-02,   0.00000000e+00,   1.00000000e-01,
+<pre>array([  0.00000000e+00,   8.91008600e+07,   1.00000000e+00,
+         1.38570132e-02,   4.00000000e+00,   5.00000000e-01,
         -1.00000000e+00])</pre>
 </div>
 
@@ -410,11 +415,11 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 
 
 <div class="output_text output_subarea output_execute_result">
-<pre>array([[ 0.11196628,  0.11107249],
-       [ 0.10302932,  0.29732446],
-       [ 0.05520127,  0.0615694 ],
-       [ 0.15866614,  0.01717986],
-       [ 0.22498272,  0.02317027]])</pre>
+<pre>array([[ 0.08367271,  0.11661154],
+       [ 0.05881636,  0.10628529],
+       [ 0.08903457,  0.15040312],
+       [ 0.06683134,  0.12186166],
+       [ 0.1404406 ,  0.04686952]])</pre>
 </div>
 
 </div>
@@ -436,7 +441,7 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[9]:</div>
+<div class="prompt input_prompt">In&nbsp;[5]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="kn">from</span> <span class="nn">numbapro</span> <span class="k">import</span> <span class="n">guvectorize</span><span class="p">,</span> <span class="n">float64</span>
@@ -486,6 +491,22 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 </div>
 
+<div class="output_wrapper">
+<div class="output">
+
+
+<div class="output_area"><div class="prompt"></div>
+<div class="output_subarea output_stream output_stderr output_text">
+<pre>Vendor:  Continuum Analytics, Inc.
+Package: numbapro
+Message: trial mode expires in 29 days
+</pre>
+</div>
+</div>
+
+</div>
+</div>
+
 </div>
 <div class="cell border-box-sizing text_cell rendered">
 <div class="prompt input_prompt">
@@ -499,12 +520,10 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[10]:</div>
+<div class="prompt input_prompt">In&nbsp;[6]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="n">cpu_calc</span> <span class="o">=</span> <span class="n">guvectorize</span><span class="p">([(</span><span class="n">float64</span><span class="p">[:,:],</span> <span class="n">float64</span><span class="p">[:],</span> <span class="n">float64</span><span class="p">[:])],</span> <span class="s">&#39;(m,n),(k)-&gt;()&#39;</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s">&#39;cpu&#39;</span><span class="p">,</span> <span class="n">nopython</span><span class="o">=</span><span class="k">True</span><span class="p">)(</span><span class="n">calc_CVA</span><span class="p">)</span>
-<span class="c">#par_calc = guvectorize([(float64[:,:], float64[:], float64[:])], &#39;(m,n),(k)-&gt;()&#39;, target=&#39;parallel&#39;)(calc_CVA)</span>
-<span class="c">#gpu_calc = guvectorize([(float64[:,:], float64[:], float64[:])], &#39;(m,n),(k)-&gt;()&#39;, target=&#39;gpu&#39;)(calc_CVA)</span>
 </pre></div>
 
 </div>
@@ -528,8 +547,8 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
 <hr>
-<h1 id="Performance">Performance<a class="anchor-link" href="#Performance">&#182;</a></h1><p>Below we see examples of this being ran with regular Python and numba targeting the cpu.  In the 1000 simulation / 2000 deals scenario Python takes about 4 minutes compute in Python and about 4 seconds in numba.</p>
-<p><strong><em>That's a 100X speedup!!!</em></strong></p>
+<h1 id="Performance">Performance<a class="anchor-link" href="#Performance">&#182;</a></h1><p>Below we see examples of this being ran with regular Python and numba targeting the cpu.  In the 1000 simulation / 2000 deals scenario Python takes about 4 minutes compute in Python and about 2 seconds in numba.</p>
+<p><strong><em>That's a 200X speedup!!!</em></strong></p>
 <p>That is a remarkable difference.  I didn't really have to change much either in order to get the function to compile with numba.  The main challenge I encountered was setting the data types of the inputs correctly, namely enumerating string values.</p>
 <p>When I expand this to a 2,000,000 deal scenario, numba computes the CVA in about 4 minutes on my Macbook Air.  There is still the opportunity to target the gpu and see how this would perform on a CUDA-capable machine.</p>
 
@@ -538,7 +557,7 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[11]:</div>
+<div class="prompt input_prompt">In&nbsp;[7]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="n">args</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="n">sims</span><span class="p">])</span>  <span class="c"># starting fxprice, vol, int_rate, simulations</span>
@@ -552,7 +571,7 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[12]:</div>
+<div class="prompt input_prompt">In&nbsp;[8]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="o">%</span><span class="k">time</span> calc_CVA(deals, args, res)
@@ -569,17 +588,17 @@ $$q_i = \int_{0}^{i} q(\lambda, t)dt$$<p>Only two types of deals are looked at, 
 
 <div class="output_area"><div class="prompt"></div>
 <div class="output_subarea output_stream output_stdout output_text">
-<pre>CPU times: user 4min 32s, sys: 1.64 s, total: 4min 34s
-Wall time: 4min 36s
+<pre>CPU times: user 4min 9s, sys: 494 ms, total: 4min 9s
+Wall time: 4min 10s
 </pre>
 </div>
 </div>
 
-<div class="output_area"><div class="prompt output_prompt">Out[12]:</div>
+<div class="output_area"><div class="prompt output_prompt">Out[8]:</div>
 
 
 <div class="output_text output_subarea output_execute_result">
-<pre>0.024323997643137394</pre>
+<pre>0.024708592505027108</pre>
 </div>
 
 </div>
@@ -590,7 +609,7 @@ Wall time: 4min 36s
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[13]:</div>
+<div class="prompt input_prompt">In&nbsp;[10]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="o">%</span><span class="k">time</span> cpu_calc(deals, args, res)
@@ -607,17 +626,17 @@ Wall time: 4min 36s
 
 <div class="output_area"><div class="prompt"></div>
 <div class="output_subarea output_stream output_stdout output_text">
-<pre>CPU times: user 3.73 s, sys: 35.2 ms, total: 3.77 s
-Wall time: 3.78 s
+<pre>CPU times: user 1.83 s, sys: 15.2 ms, total: 1.85 s
+Wall time: 1.85 s
 </pre>
 </div>
 </div>
 
-<div class="output_area"><div class="prompt output_prompt">Out[13]:</div>
+<div class="output_area"><div class="prompt output_prompt">Out[10]:</div>
 
 
 <div class="output_text output_subarea output_execute_result">
-<pre>0.024323997643137394</pre>
+<pre>0.024708592505027108</pre>
 </div>
 
 </div>
@@ -632,20 +651,42 @@ Wall time: 3.78 s
 <div class="inner_cell">
 <div class="text_cell_render border-box-sizing rendered_html">
 <hr>
-<h1 id="Analysis">Analysis<a class="anchor-link" href="#Analysis">&#182;</a></h1><p>Why do we want the performance?</p>
+<h1 id="Analysis">Analysis<a class="anchor-link" href="#Analysis">&#182;</a></h1><p>What does the extra performance buy us?</p>
 <p>Since we can now calculate CVA 150 times faster, we can more easily compute CVA under different scenarios.  For example, a risk officer wants to get an idea of CVA for a range of volatilities.  Or a trader wants to rebalance the type of counterparty risk.  All of these can be determined on the fly (relatively).</p>
+
+</div>
+</div>
+</div>
+<div class="cell border-box-sizing text_cell rendered">
+<div class="prompt input_prompt">
+</div>
+<div class="inner_cell">
+<div class="text_cell_render border-box-sizing rendered_html">
+<p>As an example, what happens with different levels of the interest rate? As shown below, there is a clear behavior, with a slight convexity in the level of rates.</p>
 
 </div>
 </div>
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[21]:</div>
+<div class="prompt input_prompt">In&nbsp;[11]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
 <span class="kn">from</span> <span class="nn">bokeh.charts</span> <span class="k">import</span> <span class="n">Line</span><span class="p">,</span> <span class="n">Scatter</span><span class="p">,</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">show</span><span class="p">,</span> <span class="n">output_notebook</span>
 <span class="n">output_notebook</span><span class="p">()</span>
+
+<span class="n">int_cva</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">ints</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.10</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ints</span><span class="p">:</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="n">sims</span><span class="p">])</span>  <span class="c"># starting fxprice, vol, int_rate, recov_rate, simulations</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">cpu_calc</span><span class="p">(</span><span class="n">deals</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">res</span><span class="p">)</span>
+    <span class="n">int_cva</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    
+<span class="n">data</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s">&#39;CVA&#39;</span><span class="p">:</span> <span class="n">int_cva</span><span class="p">,</span> <span class="s">&#39;int_rate&#39;</span><span class="p">:</span> <span class="n">ints</span><span class="p">})</span>
+<span class="n">line</span> <span class="o">=</span> <span class="n">Line</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">x</span><span class="o">=</span><span class="s">&#39;int_rate&#39;</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="s">&#39;CVA&#39;</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s">&#39;CVA vs Interest Rate&#39;</span><span class="p">)</span>
+<span class="n">show</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
 </pre></div>
 
 </div>
@@ -877,54 +918,14 @@ Wall time: 3.78 s
 
 </div>
 
-</div>
-</div>
-
-</div>
-<div class="cell border-box-sizing text_cell rendered">
-<div class="prompt input_prompt">
-</div>
-<div class="inner_cell">
-<div class="text_cell_render border-box-sizing rendered_html">
-<h2 id="What-happens-with-different-levels-of-the-interest-rate?">What happens with different levels of the interest rate?<a class="anchor-link" href="#What-happens-with-different-levels-of-the-interest-rate?">&#182;</a></h2><p>We can see there is a slight convexity to the curve.</p>
-
-</div>
-</div>
-</div>
-<div class="cell border-box-sizing code_cell rendered">
-<div class="input">
-<div class="prompt input_prompt">In&nbsp;[26]:</div>
-<div class="inner_cell">
-    <div class="input_area">
-<div class=" highlight hl-ipython3"><pre><span class="n">int_cva</span> <span class="o">=</span> <span class="p">[]</span>
-<span class="n">ints</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.10</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
-<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ints</span><span class="p">:</span>
-    <span class="n">args</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="n">sims</span><span class="p">])</span>  <span class="c"># starting fxprice, vol, int_rate, recov_rate, simulations</span>
-    <span class="n">res</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-    <span class="n">cpu_calc</span><span class="p">(</span><span class="n">deals</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">res</span><span class="p">)</span>
-    <span class="n">int_cva</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-    
-<span class="n">data</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s">&#39;CVA&#39;</span><span class="p">:</span> <span class="n">int_cva</span><span class="p">,</span> <span class="s">&#39;int_rate&#39;</span><span class="p">:</span> <span class="n">ints</span><span class="p">})</span>
-<span class="n">line</span> <span class="o">=</span> <span class="n">Line</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">x</span><span class="o">=</span><span class="s">&#39;int_rate&#39;</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="s">&#39;CVA&#39;</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s">&#39;CVA vs Interest Rate&#39;</span><span class="p">)</span>
-<span class="n">show</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
-</pre></div>
-
-</div>
-</div>
-</div>
-
-<div class="output_wrapper">
-<div class="output">
-
-
 <div class="output_area"><div class="prompt"></div>
 
 <div class="output_html rendered_html output_subarea ">
 <script type="text/javascript">
         Bokeh.$(function() {
-        var all_models = [{"attributes": {"ticker": {"id": "70d03c38-1fdb-4a6a-a9aa-91a4476bff67", "type": "BasicTicker"}, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "tags": [], "id": "6afeccfd-e6ac-4cbd-9ed4-ecf59f5ecf6b", "axis_label": "int_rate", "doc": null, "formatter": {"id": "8f49fc4f-b18b-4f79-b150-a15f9d9abb38", "type": "BasicTickFormatter"}}, "id": "6afeccfd-e6ac-4cbd-9ed4-ecf59f5ecf6b", "type": "LinearAxis"}, {"attributes": {"data": {"y_values": [0.024883093190117576, 0.024323997643137394, 0.02378628616517629, 0.02326890599066531, 0.022770864187819793, 0.022291223929608604, 0.021829101012549482, 0.02138366060601384, 0.020954114216067524, 0.020539716848972087], "x_values": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]}, "callback": null, "column_names": ["y_values", "x_values"], "selected": {"2d": {"indices": []}, "1d": {"indices": []}, "0d": {"flag": false, "indices": []}}, "id": "eb7bb900-2290-4729-a6a0-c614e7e81f39", "tags": [], "doc": null}, "id": "eb7bb900-2290-4729-a6a0-c614e7e81f39", "type": "ColumnDataSource"}, {"attributes": {"callback": null, "end": 0.025317430824232125, "tags": [], "start": 0.020105379214857538, "id": "a3e539ae-1d04-4e70-993e-6136ffe9a315", "doc": null}, "id": "a3e539ae-1d04-4e70-993e-6136ffe9a315", "type": "Range1d"}, {"attributes": {"id": "3bbfb25c-2068-4410-a3d9-ea3e016b0df0", "mantissas": [2, 5, 10], "doc": null, "tags": []}, "id": "3bbfb25c-2068-4410-a3d9-ea3e016b0df0", "type": "BasicTicker"}, {"attributes": {"selection_glyph": null, "glyph": {"id": "bd1d2fbe-484e-452d-8026-8dd032a563f1", "type": "Line"}, "tags": [], "nonselection_glyph": null, "id": "5f3acff6-6371-4161-b68c-1dee8234dea9", "data_source": {"id": "eb7bb900-2290-4729-a6a0-c614e7e81f39", "type": "ColumnDataSource"}, "doc": null}, "id": "5f3acff6-6371-4161-b68c-1dee8234dea9", "type": "GlyphRenderer"}, {"attributes": {"id": "6f3bab16-f8d0-44d6-bb86-9503ea5b8612", "geometries": [], "doc": null, "tags": []}, "id": "6f3bab16-f8d0-44d6-bb86-9503ea5b8612", "type": "ToolEvents"}, {"attributes": {"tags": [], "id": "a40ff648-bc3f-4816-af1c-327e0062f10d", "dimensions": ["width", "height"], "doc": null, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}}, "id": "a40ff648-bc3f-4816-af1c-327e0062f10d", "type": "PanTool"}, {"attributes": {"id": "d1f746af-e0e1-426f-9305-66aafcbe369c", "doc": null, "tags": []}, "id": "d1f746af-e0e1-426f-9305-66aafcbe369c", "type": "BasicTickFormatter"}, {"attributes": {"tags": [], "id": "31e742ab-b2b9-42c5-beae-460c4823812d", "dimensions": ["width", "height"], "doc": null, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}}, "id": "31e742ab-b2b9-42c5-beae-460c4823812d", "type": "BoxZoomTool"}, {"attributes": {"x_range": {"id": "9dfe0a4f-cc02-4b3c-8cc2-62ba4d17d619", "type": "Range1d"}, "left": [{"id": "7133634a-698e-4c53-b589-69bce1335719", "type": "LinearAxis"}], "extra_y_ranges": {}, "below": [{"id": "6afeccfd-e6ac-4cbd-9ed4-ecf59f5ecf6b", "type": "LinearAxis"}], "extra_x_ranges": {}, "plot_height": 400, "title_text_font_style": "bold", "tags": [], "responsive": false, "doc": null, "title": "CVA vs Interest Rate", "right": [], "plot_width": 600, "title_text_font_size": {"value": "12pt"}, "renderers": [{"id": "5f3acff6-6371-4161-b68c-1dee8234dea9", "type": "GlyphRenderer"}, {"id": "6afeccfd-e6ac-4cbd-9ed4-ecf59f5ecf6b", "type": "LinearAxis"}, {"id": "7133634a-698e-4c53-b589-69bce1335719", "type": "LinearAxis"}, {"id": "dcf98280-a78b-435f-9091-0103d3a6fc8d", "type": "Grid"}, {"id": "674becf6-f174-4f2e-9322-1d09cac2cd05", "type": "Grid"}], "above": [], "y_range": {"id": "a3e539ae-1d04-4e70-993e-6136ffe9a315", "type": "Range1d"}, "tool_events": {"id": "6f3bab16-f8d0-44d6-bb86-9503ea5b8612", "type": "ToolEvents"}, "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "tools": [{"id": "a40ff648-bc3f-4816-af1c-327e0062f10d", "type": "PanTool"}, {"id": "9aa0dd53-46ab-40fa-871c-14cd51414f4e", "type": "WheelZoomTool"}, {"id": "31e742ab-b2b9-42c5-beae-460c4823812d", "type": "BoxZoomTool"}, {"id": "3fe96b70-0124-4011-9b06-430fdb98c9f9", "type": "PreviewSaveTool"}, {"id": "bbebfa4d-fdaa-4630-87e5-133d13eb76a9", "type": "ResizeTool"}, {"id": "f137dfa6-02f5-4204-adb6-e12dfbffa976", "type": "ResetTool"}, {"id": "c9b5bc99-af57-4534-a072-589837a87d31", "type": "HelpTool"}]}, "subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, {"attributes": {"id": "3fe96b70-0124-4011-9b06-430fdb98c9f9", "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "doc": null, "tags": []}, "id": "3fe96b70-0124-4011-9b06-430fdb98c9f9", "type": "PreviewSaveTool"}, {"attributes": {"id": "8f49fc4f-b18b-4f79-b150-a15f9d9abb38", "doc": null, "tags": []}, "id": "8f49fc4f-b18b-4f79-b150-a15f9d9abb38", "type": "BasicTickFormatter"}, {"attributes": {"id": "bbebfa4d-fdaa-4630-87e5-133d13eb76a9", "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "doc": null, "tags": []}, "id": "bbebfa4d-fdaa-4630-87e5-133d13eb76a9", "type": "ResizeTool"}, {"attributes": {"id": "70d03c38-1fdb-4a6a-a9aa-91a4476bff67", "mantissas": [2, 5, 10], "doc": null, "tags": []}, "id": "70d03c38-1fdb-4a6a-a9aa-91a4476bff67", "type": "BasicTicker"}, {"attributes": {"id": "c9b5bc99-af57-4534-a072-589837a87d31", "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "doc": null, "tags": []}, "id": "c9b5bc99-af57-4534-a072-589837a87d31", "type": "HelpTool"}, {"attributes": {"callback": null, "end": 0.09899999999999999, "tags": [], "start": -0.009, "id": "9dfe0a4f-cc02-4b3c-8cc2-62ba4d17d619", "doc": null}, "id": "9dfe0a4f-cc02-4b3c-8cc2-62ba4d17d619", "type": "Range1d"}, {"attributes": {"ticker": {"id": "3bbfb25c-2068-4410-a3d9-ea3e016b0df0", "type": "BasicTicker"}, "dimension": 1, "tags": [], "id": "674becf6-f174-4f2e-9322-1d09cac2cd05", "doc": null, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}}, "id": "674becf6-f174-4f2e-9322-1d09cac2cd05", "type": "Grid"}, {"attributes": {"ticker": {"id": "3bbfb25c-2068-4410-a3d9-ea3e016b0df0", "type": "BasicTicker"}, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "tags": [], "id": "7133634a-698e-4c53-b589-69bce1335719", "axis_label": "CVA", "doc": null, "formatter": {"id": "d1f746af-e0e1-426f-9305-66aafcbe369c", "type": "BasicTickFormatter"}}, "id": "7133634a-698e-4c53-b589-69bce1335719", "type": "LinearAxis"}, {"attributes": {"id": "f137dfa6-02f5-4204-adb6-e12dfbffa976", "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}, "doc": null, "tags": []}, "id": "f137dfa6-02f5-4204-adb6-e12dfbffa976", "type": "ResetTool"}, {"attributes": {"ticker": {"id": "70d03c38-1fdb-4a6a-a9aa-91a4476bff67", "type": "BasicTicker"}, "dimension": 0, "tags": [], "id": "dcf98280-a78b-435f-9091-0103d3a6fc8d", "doc": null, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}}, "id": "dcf98280-a78b-435f-9091-0103d3a6fc8d", "type": "Grid"}, {"attributes": {"tags": [], "id": "9aa0dd53-46ab-40fa-871c-14cd51414f4e", "dimensions": ["width", "height"], "doc": null, "plot": {"subtype": "Chart", "id": "3d3bda0d-fccf-40e9-89b5-4aef7e15df84", "type": "Plot"}}, "id": "9aa0dd53-46ab-40fa-871c-14cd51414f4e", "type": "WheelZoomTool"}, {"attributes": {"line_alpha": {"value": 1.0}, "y": {"field": "y_values"}, "x": {"field": "x_values"}, "tags": [], "line_color": {"value": "#f22c40"}, "id": "bd1d2fbe-484e-452d-8026-8dd032a563f1", "line_width": {"value": 2}, "line_dash": [], "doc": null}, "id": "bd1d2fbe-484e-452d-8026-8dd032a563f1", "type": "Line"}];
+        var all_models = [{"id": "bb83ab4d-451d-48a1-a64e-b90ec81f86ca", "attributes": {"id": "bb83ab4d-451d-48a1-a64e-b90ec81f86ca", "line_width": {"value": 2}, "line_alpha": {"value": 1.0}, "x": {"field": "x_values"}, "y": {"field": "y_values"}, "doc": null, "line_dash": [], "line_color": {"value": "#f22c40"}, "tags": []}, "type": "Line"}, {"id": "bd2bb1d2-c4c0-43e4-bbe5-b51fd200b4a0", "attributes": {"id": "bd2bb1d2-c4c0-43e4-bbe5-b51fd200b4a0", "doc": null, "start": 0.020482851337684693, "tags": [], "end": 0.025702748653280406, "callback": null}, "type": "Range1d"}, {"id": "c713f905-c24c-4a48-8d2c-456d8ab3980f", "attributes": {"id": "c713f905-c24c-4a48-8d2c-456d8ab3980f", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "doc": null, "tags": []}, "type": "PreviewSaveTool"}, {"id": "2f5fd7ce-2e42-4a53-9411-ce8042590849", "attributes": {"id": "2f5fd7ce-2e42-4a53-9411-ce8042590849", "mantissas": [2, 5, 10], "doc": null, "tags": []}, "type": "BasicTicker"}, {"id": "2dbda3be-4b00-47b7-b1a4-742624690ba8", "attributes": {"id": "2dbda3be-4b00-47b7-b1a4-742624690ba8", "formatter": {"id": "10013ba7-3559-46f3-8d82-909e72cbc3e3", "type": "BasicTickFormatter"}, "axis_label": "int_rate", "doc": null, "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "tags": [], "ticker": {"id": "6c3d4dda-7206-4afe-9c85-f5fd91dbbbdd", "type": "BasicTicker"}}, "type": "LinearAxis"}, {"id": "0b4e3eb1-e981-46fa-9240-e9310246f6d8", "attributes": {"id": "0b4e3eb1-e981-46fa-9240-e9310246f6d8", "doc": null, "start": -0.009, "tags": [], "end": 0.09899999999999999, "callback": null}, "type": "Range1d"}, {"id": "bf17fa7e-75ef-454b-9f87-9498fb1a7888", "attributes": {"id": "bf17fa7e-75ef-454b-9f87-9498fb1a7888", "tags": [], "doc": null}, "type": "BasicTickFormatter"}, {"id": "e1eb2162-4a44-40ef-ad8b-dcb10260c04a", "attributes": {"id": "e1eb2162-4a44-40ef-ad8b-dcb10260c04a", "formatter": {"id": "bf17fa7e-75ef-454b-9f87-9498fb1a7888", "type": "BasicTickFormatter"}, "axis_label": "CVA", "doc": null, "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "tags": [], "ticker": {"id": "2f5fd7ce-2e42-4a53-9411-ce8042590849", "type": "BasicTicker"}}, "type": "LinearAxis"}, {"id": "a95aaa07-ead1-4b9d-81ba-3ac862837676", "attributes": {"id": "a95aaa07-ead1-4b9d-81ba-3ac862837676", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "doc": null, "tags": []}, "type": "ResizeTool"}, {"id": "10013ba7-3559-46f3-8d82-909e72cbc3e3", "attributes": {"id": "10013ba7-3559-46f3-8d82-909e72cbc3e3", "tags": [], "doc": null}, "type": "BasicTickFormatter"}, {"id": "a51e80e0-8f8d-485b-8f10-dfedf6004ded", "attributes": {"id": "a51e80e0-8f8d-485b-8f10-dfedf6004ded", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "tags": [], "doc": null, "ticker": {"id": "6c3d4dda-7206-4afe-9c85-f5fd91dbbbdd", "type": "BasicTicker"}, "dimension": 0}, "type": "Grid"}, {"id": "bd98c1c5-ae8d-401a-b224-7e68724c4477", "attributes": {"id": "bd98c1c5-ae8d-401a-b224-7e68724c4477", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "dimensions": ["width", "height"], "doc": null, "tags": []}, "type": "BoxZoomTool"}, {"id": "6c3d4dda-7206-4afe-9c85-f5fd91dbbbdd", "attributes": {"id": "6c3d4dda-7206-4afe-9c85-f5fd91dbbbdd", "mantissas": [2, 5, 10], "doc": null, "tags": []}, "type": "BasicTicker"}, {"id": "4e86e0b4-4a24-4a68-af3a-fbc4920c0593", "attributes": {"id": "4e86e0b4-4a24-4a68-af3a-fbc4920c0593", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "doc": null, "tags": []}, "type": "ResetTool"}, {"id": "f0ea82fc-595e-452c-bfc6-dc1d3006efa4", "attributes": {"id": "f0ea82fc-595e-452c-bfc6-dc1d3006efa4", "doc": null, "selected": {"0d": {"flag": false, "indices": []}, "1d": {"indices": []}, "2d": {"indices": []}}, "callback": null, "tags": [], "column_names": ["y_values", "x_values"], "data": {"y_values": [0.025267757210314098, 0.02470859250502711, 0.024170624747764546, 0.023652811452322887, 0.02315416962906313, 0.022673772052346566, 0.02221074377780496, 0.021764258891894376, 0.021333537477524128, 0.020917842780651], "x_values": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]}}, "type": "ColumnDataSource"}, {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "attributes": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "tool_events": {"id": "29ddaa0f-746d-492f-93e4-a7c04760c4b9", "type": "ToolEvents"}, "extra_x_ranges": {}, "title_text_font_size": {"value": "12pt"}, "left": [{"id": "e1eb2162-4a44-40ef-ad8b-dcb10260c04a", "type": "LinearAxis"}], "right": [], "title": "CVA vs Interest Rate", "y_range": {"id": "bd2bb1d2-c4c0-43e4-bbe5-b51fd200b4a0", "type": "Range1d"}, "below": [{"id": "2dbda3be-4b00-47b7-b1a4-742624690ba8", "type": "LinearAxis"}], "tags": [], "tools": [{"id": "c91cb690-6243-4247-85f2-9ed7797db7c0", "type": "PanTool"}, {"id": "5df72a92-83e6-4655-99f3-9acb9226a9ad", "type": "WheelZoomTool"}, {"id": "bd98c1c5-ae8d-401a-b224-7e68724c4477", "type": "BoxZoomTool"}, {"id": "c713f905-c24c-4a48-8d2c-456d8ab3980f", "type": "PreviewSaveTool"}, {"id": "a95aaa07-ead1-4b9d-81ba-3ac862837676", "type": "ResizeTool"}, {"id": "4e86e0b4-4a24-4a68-af3a-fbc4920c0593", "type": "ResetTool"}, {"id": "f3cb8e24-ee88-4004-8700-4b2841d85796", "type": "HelpTool"}], "renderers": [{"id": "06883381-087c-4ff4-a186-ee59e2600b51", "type": "GlyphRenderer"}, {"id": "2dbda3be-4b00-47b7-b1a4-742624690ba8", "type": "LinearAxis"}, {"id": "e1eb2162-4a44-40ef-ad8b-dcb10260c04a", "type": "LinearAxis"}, {"id": "a51e80e0-8f8d-485b-8f10-dfedf6004ded", "type": "Grid"}, {"id": "c0f6f716-9e05-4243-a794-d15953e2b437", "type": "Grid"}], "doc": null, "extra_y_ranges": {}, "plot_height": 400, "x_range": {"id": "0b4e3eb1-e981-46fa-9240-e9310246f6d8", "type": "Range1d"}, "title_text_font_style": "bold", "above": [], "responsive": false, "plot_width": 600}, "subtype": "Chart", "type": "Plot"}, {"id": "f3cb8e24-ee88-4004-8700-4b2841d85796", "attributes": {"id": "f3cb8e24-ee88-4004-8700-4b2841d85796", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "doc": null, "tags": []}, "type": "HelpTool"}, {"id": "06883381-087c-4ff4-a186-ee59e2600b51", "attributes": {"id": "06883381-087c-4ff4-a186-ee59e2600b51", "data_source": {"id": "f0ea82fc-595e-452c-bfc6-dc1d3006efa4", "type": "ColumnDataSource"}, "selection_glyph": null, "nonselection_glyph": null, "doc": null, "tags": [], "glyph": {"id": "bb83ab4d-451d-48a1-a64e-b90ec81f86ca", "type": "Line"}}, "type": "GlyphRenderer"}, {"id": "29ddaa0f-746d-492f-93e4-a7c04760c4b9", "attributes": {"id": "29ddaa0f-746d-492f-93e4-a7c04760c4b9", "doc": null, "tags": [], "geometries": []}, "type": "ToolEvents"}, {"id": "5df72a92-83e6-4655-99f3-9acb9226a9ad", "attributes": {"id": "5df72a92-83e6-4655-99f3-9acb9226a9ad", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "dimensions": ["width", "height"], "doc": null, "tags": []}, "type": "WheelZoomTool"}, {"id": "c91cb690-6243-4247-85f2-9ed7797db7c0", "attributes": {"id": "c91cb690-6243-4247-85f2-9ed7797db7c0", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "dimensions": ["width", "height"], "doc": null, "tags": []}, "type": "PanTool"}, {"id": "c0f6f716-9e05-4243-a794-d15953e2b437", "attributes": {"id": "c0f6f716-9e05-4243-a794-d15953e2b437", "plot": {"id": "48adf6a1-faf2-4c4e-941b-e747eee62652", "subtype": "Chart", "type": "Plot"}, "tags": [], "doc": null, "ticker": {"id": "2f5fd7ce-2e42-4a53-9411-ce8042590849", "type": "BasicTicker"}, "dimension": 1}, "type": "Grid"}];
         Bokeh.load_models(all_models);
-        var plots = [{'modeltype': 'Plot', 'modelid': '3d3bda0d-fccf-40e9-89b5-4aef7e15df84', 'elementid': 'a460992b-e46c-4787-9b5e-684fe78b70b8'}];
+        var plots = [{'modelid': '48adf6a1-faf2-4c4e-941b-e747eee62652', 'elementid': '3ff03ad9-6bcf-41af-91b8-d6ee09403a23', 'modeltype': 'Plot'}];
         for (idx in plots) {
         	var plot = plots[idx];
         	var model = Bokeh.Collections(plot.modeltype).get(plot.modelid);
@@ -940,7 +941,7 @@ Wall time: 3.78 s
         }
     });
     </script>
-<div class="plotdiv" id="a460992b-e46c-4787-9b5e-684fe78b70b8"></div>
+<div class="plotdiv" id="3ff03ad9-6bcf-41af-91b8-d6ee09403a23"></div>
 
 
 </div>
@@ -959,31 +960,13 @@ Wall time: 3.78 s
 <hr>
 <h1 id="Conclusion">Conclusion<a class="anchor-link" href="#Conclusion">&#182;</a></h1><p>There are really two types of performance here.  One is the faster calculation time.  The other is the speed in writing this tool.</p>
 <p>Speed of implementation is one of the highlights of Python.  Numba offers the ability to achieve C-level performance with minimal code.  Traders can be impatient people.  Taking advantage of numba, ipython, bokeh, and ipython widgets, an interactive tool can be created in hours.  No C, no java, and very minimal html/js.</p>
-<p>In a future post, I will convert this to a full tool where I'll demonstrate gui in ipython using widgets.</p>
 
 </div>
 </div>
 </div>
 <div class="cell border-box-sizing code_cell rendered">
 <div class="input">
-<div class="prompt input_prompt">In&nbsp;[&nbsp;]:</div>
-<div class="inner_cell">
-    <div class="input_area">
-<div class=" highlight hl-ipython3"><pre><span class="kn">import</span> <span class="nn">IPython</span>
-<span class="n">IPython</span><span class="o">.</span><span class="n">display</span><span class="o">.</span><span class="n">Javascript</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
-<span class="s">html = &#39;&lt;i&gt;Contents:</span><span class="se">\t</span><span class="s">&lt;/i&gt;&#39; + $(&#39;h1&#39;).map( function(i,d){ return &#39;&lt;a href=&quot;#&#39;+$(d).attr(&#39;id&#39;)+ &#39;&quot;&gt;&lt;b&gt;&#39;+$(d).text().slice(0,-1)+&#39;&lt;/b&gt;&lt;/a&gt;&#39; }).toArray().join(&#39; - &#39;)</span>
-<span class="s">$(&#39;#toc&#39;).html(html)</span>
-<span class="s">&quot;&quot;&quot;</span><span class="p">)</span>
-</pre></div>
-
-</div>
-</div>
-</div>
-
-</div>
-<div class="cell border-box-sizing code_cell rendered">
-<div class="input">
-<div class="prompt input_prompt">In&nbsp;[19]:</div>
+<div class="prompt input_prompt">In&nbsp;[13]:</div>
 <div class="inner_cell">
     <div class="input_area">
 <div class=" highlight hl-ipython3"><pre><span class="o">%%</span><span class="nx">javascript</span>
